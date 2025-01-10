@@ -1,0 +1,513 @@
+---
+title: "DANA4810-Project"
+author: "Patricia Tating, Milkah Nyaingo, Bemba Munkhchuluun & Maryam Gadimova"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+# STUDY OBJECTIVES
+
+1. What factors have the most significant impact on the median value of homes in the Boston area?
+2. Which predictive model most accurately forecasts housing prices based on the available dataset features?
+
+# VARIABLES
+
+* CRIM - Per capita crime rate by town - Numerical 
+* ZN - Proportion of residential land zoned for lots over 25,000 sq.ft. - Numerical 
+* INDUS - Proportion of non-retail business acres per town - Numerical 
+* CHAS - Charles River dummy variable (= 1 if tract bounds river; 0 otherwise) - Categorical 
+* NOX - Nitric oxides concentration (parts per 10 million) - Numerical 
+* RM - Average number of rooms per dwelling - Numerical 
+* AGE - Proportion of owner-occupied units built prior to 1940 - Numerical 
+* DIS - Weighted distances to five Boston employment centres - Numerical 
+* RAD - Index of accessibility to radial highways - Numerical 
+* TAX - Full-value property-tax rate per $10,000 - Numerical 
+* PTRATIO - Pupil-teacher ratio by town - Numerical 
+* B - 1000(Bk - 0.63)^2 where Bk is the proportion of blacks by town - Numerical 
+* LSTAT - % lower status of the population - Numerical 
+* PRICE - Median value of owner-occupied homes in $1000's - Numerical 
+
+# READING THE DATA
+
+```{r}
+bhouse <- read.csv("Boston_housing.csv", header=TRUE)
+View(bhouse)
+```
+
+**Splitting data in two datasets**
+
+```{r}
+set.seed(100)  # setting seed to reproduce results of random sampling
+trainingRowIndex <- sample(1:nrow(bhouse), 0.90*nrow(bhouse))  # row indices for training data
+training <- bhouse[trainingRowIndex, ]  # model training data
+testing  <- bhouse[-trainingRowIndex, ]   # test data
+```
+
+```{r}
+dim(training)
+```
+
+```{r}
+dim(testing)
+```
+
+# EXPLORATORY DATA ANALYSIS
+
+**Plots and Summaries**
+
+```{r}
+sum(is.na(training))
+
+# Remove rows with missing values
+training <- na.omit(training)
+```
+
+```{r}
+# Summary statistics for numerical variables
+summary(training)
+
+```
+
+```{r}
+str(training)
+```
+```{r}
+# Identify numerical columns by excluding categorical ones
+numerical_columns <- names(training)[!names(training) %in% c("RAD", "CHAS")]
+
+# Set up the plotting area to display multiple histograms
+par(mfrow = c(3, 4))
+
+# Loop through only the numerical columns
+for(i in numerical_columns) {
+  hist(training[[i]], main = i, xlab = "", col = "#a1341a", breaks = 30)
+}
+
+# Reset the plotting area
+par(mfrow = c(1, 1))
+```
+
+```{r}
+Rad_levels <- table(training$RAD)
+barplot(Rad_levels, xlab = "Index of RAD", ylab = "Count",col = "#a1341a")
+```
+
+```{r}
+CHAS_levels <- table(training$CHAS)
+percentages <- round(100 * CHAS_levels / sum(CHAS_levels), 1)
+
+# Create pie chart
+pie(CHAS_levels, 
+    main = "Distribution of CHAS Levels", 
+    labels = paste(names(CHAS_levels), ": ", percentages, "%"), 
+    col = c("#a1341a","#152a51"))
+```
+
+**Checking for Multicollinearity**
+
+```{r}
+cor(training)
+```
+
+```{r}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+install.packages("corrplot")
+library(corrplot)
+correlation_matrix <- cor(training)
+corrplot(correlation_matrix, method = "color", type = "upper")
+```
+
+# MODEL BUILDING AND VARIABLE SELECTION
+
+```{r}
+pairs(PRICE~CRIM+ZN+INDUS+CHAS+NOX+RM+AGE+DIS+RAD+TAX+PTRATIO+B+LSTAT, data=training, col = "#152a51")
+```
+
+**Full model**
+(All 13 candidate explanatory variables)
+
+```{r}
+fit1 <- lm(PRICE~CRIM+ZN+INDUS+factor(CHAS)+NOX+RM+AGE+DIS+RAD+TAX+PTRATIO+B+LSTAT, data=training)
+summary(fit1)
+```
+
+```{r}
+step(fit1, direction ="both")
+```
+
+The model from stepwise analysis shows insignificant variables are INDUS and AGE. We will build our base model from the remaining significant variables. We have also eliminated the multicollinearity between INDUS~DIS and AGE~DIS after the stepwise process. We decided to keep NOX~DIS as we know both variables are significant in determining the house prices.
+
+**Base Model** 
+(Stepwise selection model without INDUS & AGE)
+
+```{r}
+fit2 <- lm(PRICE~CRIM+ZN+factor(CHAS)+NOX+RM+DIS+RAD+TAX+PTRATIO+B+LSTAT, data=training)
+summary(fit2)
+```
+
+**Higher Order Model** 
+(Based on Pair plot matrix => CRIM^2, LSTAT^2, DIS^2)
+
+```{r}
+subset_data <- training[, c("PRICE","CRIM", "LSTAT", "DIS")]
+
+pairs(subset_data, col = "#152a51")
+```
+
+```{r}
+fit3 <- lm(PRICE~CRIM+ZN+factor(CHAS)+NOX+RM+DIS+RAD+TAX+PTRATIO+B+LSTAT+I(CRIM^2)+I(LSTAT^2)+I(DIS^2), data=training)
+summary(fit3)
+```
+
+**Interaction Model** 
+(Based on theory, we know that AGE is significant variable, so we fitted it in an interaction model)
+
+```{r}
+fit4 <- lm(PRICE~CRIM+factor(CHAS)+NOX+AGE+RM+DIS+RAD+TAX+PTRATIO+B+LSTAT+I(CRIM^2)+I(LSTAT^2)+I(DIS^2)+AGE:RM+RM:LSTAT, data=training)
+summary(fit4)
+```
+
+*Interaction Plot for AGE & RM*
+```{r}
+library(ggplot2)
+
+# We use 'cut' to create discrete bins for AGE, here I've used quartiles as an example
+training$AGE_group <- cut(training$AGE, breaks=quantile(training$AGE, probs=0:4/4), include.lowest=TRUE, labels=FALSE)
+
+# Plot RM vs PRICE for different levels of AGE
+ggplot(training, aes(x = RM, y = PRICE, color = as.factor(AGE_group))) +
+  geom_point(alpha = 0.5) + # Actual data points
+  geom_smooth(method = "lm", se = FALSE, aes(group = AGE_group)) + # Add a regression line for each AGE group
+  theme_minimal() +
+  labs(title = "Interaction Plot of PRICE with RM for different levels of AGE",
+       x = "Average Number of Rooms per Dwelling (RM)",
+       y = "Median Value of Owner-Occupied Homes (PRICE)",
+       color = "AGE Level") +
+  scale_color_brewer(palette = "Dark2") # Use a color palette that's visually distinct
+
+# Print the plot
+ggsave("interaction_plot_RM_AGE.png", width = 10, height = 8)
+
+
+```
+
+*Interaction Plot for RM & LSTAT*
+```{r}
+# We use 'cut' to create discrete bins for LSTAT, here I've used quartiles as an example
+training$LSTAT_group <- cut(training$LSTAT, breaks=quantile(training$LSTAT, probs=0:4/4), include.lowest=TRUE, labels=FALSE)
+
+# Now we plot RM vs PRICE for different levels of LSTAT
+ggplot(training, aes(x = RM, y = PRICE, color = as.factor(LSTAT_group))) +
+  geom_point(alpha = 0.5) + # Actual data points
+  geom_smooth(method = "lm", se = FALSE, aes(group = LSTAT_group)) + # Add a regression line for each LSTAT group
+  theme_minimal() +
+  labs(title = "Interaction Plot of PRICE with RM for different levels of LSTAT",
+       x = "Average Number of Rooms per Dwelling (RM)",
+       y = "Median Value of Owner-Occupied Homes (PRICE)",
+       color = "LSTAT Level") +
+  scale_color_brewer(palette = "Dark2") # Use a color palette that's visually distinct
+
+# Print the plot
+ggsave("interaction_plot_RM_LSTAT.png", width = 10, height = 8)
+
+```
+
+**Final Model**
+(We choose the simpler model => we removed LSTAT^2 & B)
+
+```{r}
+fit5 <- lm(PRICE~CRIM+factor(CHAS)+NOX+AGE+RM+DIS+RAD+TAX+PTRATIO+LSTAT+I(CRIM^2)+I(DIS^2)+AGE:RM+RM:LSTAT, data=training)
+summary(fit5)
+```
+
+# MODEL COMPARISON
+A Test for Comparing Nested Models
+
+**Model Comparison Fit2 ~ Fit1**
+* Reduced Model: fit2 <- lm(PRICE~CRIM+ZN+factor(CHAS)+NOX+RM+DIS+RAD+TAX+PTRATIO+B+LSTAT, data=training)
+* Full Model: fit1 ~  lm(PRICE~CRIM+ZN+factor(CHAS)+NOX+RM+DIS+RAD+TAX+PTRATIO+B+LSTAT+AGE+INDUS, data=training)
+
+
+Hypothesis:
+Reduced Model (Fit2):   β12=β13=0   
+Full Model  (Fit1):     At least one of the parameters, β12 or β13 differs from 0
+
+
+The following outputs are for the full, reduced models, and partial F test respectively:
+```{r}
+anova(fit2, fit1)
+```
+
+p_value (0.77) is greater than α (0.05) so we fail to reject null hypothesis, reduced model (fit2) is significant.
+
+At 5% level of significance, we have sufficient evidence that reduced model contribute to the prediction of price
+
+
+**Model Comparison Fit2 ~ Fit3**
+
+* Reduced Model: fit2 <- lm(PRICE~CRIM+ZN+factor(CHAS)+NOX+RM+DIS+RAD+TAX+PTRATIO+B+LSTAT, data=training)
+* Full Model:    fit3 <- lm(PRICE~CRIM+ZN+factor(CHAS)+NOX+RM+DIS+RAD+TAX+PTRATIO+B+LSTAT+I(CRIM^2)+I(LSTAT^2)+I(DIS^2), data=training)
+
+
+Hypothesis:
+Reduced Model (Fit2):   β12=β13=β14=0   
+Full Model  (Fit3):     At least one of the parameters, β12,β13 or β14 differs from 0
+
+
+The following outputs are for the full, reduced models, and partial F test respectively:
+
+```{r}
+anova(fit2, fit3)
+```
+
+p_value (2.2e-16) is smaller than α (0.05) so we reject null hypothesis, full model (fit3) is significant.
+
+At 5% level of significance, we do not have sufficient evidence that reduced model contribute to the prediction of price
+
+
+**Model Comparison Fit3 ~ Fit4**
+
+* Reduced Model: fit3 <- lm(PRICE~CRIM+ZN+factor(CHAS)+NOX+RM+DIS+RAD+TAX+PTRATIO+B+LSTAT+I(CRIM^2)+I(LSTAT^2)+I(DIS^2), data=training)
+* Full Model:    fit4 <- lm(PRICE~CRIM+factor(CHAS)+NOX+AGE+RM+DIS+RAD+TAX+PTRATIO+B+LSTAT+I(CRIM^2)+I(LSTAT^2)+I(DIS^2)+AGE:RM+RM:LSTAT, data=training)
+
+
+Hypothesis:
+Reduced Model (Fit3):   β15=β16=β17=0   
+Full Model  (Fit4):     At least one of the parameters, β15, β16, β17=0 differs from 0
+
+
+The following outputs are for the full, reduced models, and partial F test respectively:
+
+```{r}
+anova(fit3, fit4)
+```
+
+p_value (2.842e-12) is smaller than α (0.05) so we reject null hypothesis, full model (fit4) is significant.
+
+At 5% level of significance, we do not have sufficient evidence that reduced model contribute to the prediction of price
+
+
+**Model Comparison Fit4 ~ Fit5**
+
+* Reduced Model: fit5 <- lm(PRICE~CRIM+factor(CHAS)+NOX+AGE+RM+DIS+RAD+TAX+PTRATIO+LSTAT+I(CRIM^2)+I(DIS^2)+AGE:RM+RM:LSTAT, data=training)
+* Full Model:    fit4 <- lm(PRICE~CRIM+factor(CHAS)+NOX+AGE+RM+DIS+RAD+TAX+PTRATIO+B+LSTAT+I(CRIM^2)+I(LSTAT^2)+I(DIS^2)+AGE:RM+RM:LSTAT, data=training)
+
+
+Hypothesis:
+Reduced Model (Fit5):   β15=β16=β17=0   
+Full Model  (Fit4):     At least one of the parameters, β15, β16, β17=0 differs from 0
+
+
+The following outputs are for the full, reduced models, and partial F test respectively:
+
+```{r}
+anova(fit5, fit4)
+```
+
+p_value (0.005141) is smaller than α (0.05) so we fail to reject null hypothesis, reduced model (fit5) is significant.
+
+At 5% level of significance, we have sufficient evidence that reduced model (fit5) contribute to the prediction of price
+
+
+# RESIDUAL ANALYSIS
+
+**Residual Plot**
+
+*Residual Plot for Fitted Model 1*
+```{r}
+sd = summary(fit1)$sigma
+
+plot(fit1$fitted.values, fit1$residuals,
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residual Plot")
+abline(h = 0, col = "#a1341a")
+abline(h = c(2, -2) * sd, lty = "dashed", col = "#a1341a")
+```
+ 
+*Residual Plot for Fitted Model 2*
+```{r}
+sd = summary(fit2)$sigma
+
+plot(fit2$fitted.values, fit2$residuals,
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residual Plot")
+abline(h = 0, col = "#a1341a")
+abline(h = c(2, -2) * sd, lty = "dashed", col = "#a1341a")
+```
+
+*Residual Plot for Fitted Model 3*
+```{r}
+sd = summary(fit3)$sigma
+
+plot(fit3$fitted.values, fit3$residuals,
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residual Plot")
+abline(h = 0, col = "#a1341a")
+abline(h = c(2, -2) * sd, lty = "dashed", col = "#a1341a")
+```
+
+*Residual Plot for Fitted Model 4*
+```{r}
+sd = summary(fit4)$sigma
+
+plot(fit4$fitted.values, fit4$residuals,
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residual Plot")
+abline(h = 0, col = "#a1341a")
+abline(h = c(2, -2) * sd, lty = "dashed", col = "#a1341a")
+```
+
+*Residual Plot for Fitted Model 5*
+```{r}
+sd = summary(fit5)$sigma
+
+plot(fit5$fitted.values, fit5$residuals,
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residual Plot")
+abline(h = 0, col = "#a1341a")
+abline(h = c(2, -2) * sd, lty = "dashed", col = "#a1341a")
+```
+
+*Estimation of σ^2*
+s = 3.973 (from Residual standard error of lm function)
+
+INTERPRETATION: We expect the model to provide predictions of House Pricing to be within about ±2s = ±2(3.973) = ±7.946 every unit of pricing.Residual plot shows we have constant variance and no pattern.
+
+# PREDICTION EQUATION
+
+```{r}
+summary(fit5)
+```
+
+
+**Predicted Housing Prices = 1.68 – 0.45(CRIM) + 2.75(CHAS:Yes) – 18.20(NOX) + 0.27(AGE) + 10.35(RM) – 3.30(DIS) + 0.40(RAD) – 0.01(TAX) – 0.81(PTRATIO) + 1.60(LSTAT) + 0.004 (CRIM2) + 0.20(DIS2) – 0.04(AGE:RM) – 0.38(RM:LSTAT)**
+
+INTERPRETATION:
+
+* CRIM (-0.46): For every one-unit increase in the per capita crime rate, the predicted housing price decreases by 0.46 units, assuming all other variables remain constant.
+
+* CHAS:Yes (2.75): If the house borders the Charles River (CHAS is "Yes"), the predicted housing price is 2.75 units higher than if it doesn't border the river, all else being equal.
+
+* NOX (-18.20): For each one-unit increase in nitric oxides concentration, the predicted housing price decreases by 18.20 units, keeping all other variables constant.
+
+* AGE (0.27): For every additional year in the age of the home, the predicted housing price increases by 0.27 units, assuming other variables stay the same.
+
+* RM (10.36): Each additional room in the house is associated with an increase of 10.36 units in the predicted housing price, with all other factors held constant.
+
+* DIS (-3.30): For every one-unit increase in the weighted distances to five Boston employment centers, the predicted housing price decreases by 3.30 units, assuming all else is constant.
+
+* RAD (0.40): Each additional index of accessibility to radial highways is associated with an increase of 0.40 units in the predicted housing price, with all other variables held constant.
+
+* TAX (-0.01): For every one-unit increase in the full-value property-tax rate per $10,000, the predicted housing price decreases by 0.01 units, assuming all other variables remain constant.
+
+* PTRATIO (-0.81): For each one-unit increase in the pupil-teacher ratio by town, the predicted housing price decreases by 0.81 units, other factors being equal.
+
+* LSTAT (1.60): For each one-unit increase in the percentage of the lower status of the population, the predicted housing price increases by 1.60 units, holding other variables constant.
+
+* CRIM^2 (0.004): This term represents the non-linear effect of the crime rate. As CRIM increases, the impact on housing prices changes by an additional 0.004 units for each unit increase in CRIM, adjusted for the effect of CRIM itself.
+
+* DIS^2 (0.20): Similar to CRIM^2, this represents the non-linear effect of the weighted distances to employment centers. The effect on housing prices changes by 0.20 units for each unit increase in DIS, considering the linear effect of DIS.
+
+* AGE : RM (-0.04): This interaction term suggests that the effect of the age of the home on the predicted housing prices changes by -0.04 units for each additional room, implying that the positive effect of additional rooms diminishes as the house gets older.
+
+* RM : LSTAT (-0.38): This interaction term indicates that the effect of the number of rooms (RM) on housing prices is reduced by 0.38 units for each additional unit of LSTAT. This suggests that the positive impact of having more rooms is less in areas with a higher proportion of lower status population.
+
+# TESTING UTILITY OF MODEL
+
+**Anova F-Test**
+
+H0: β1 = β2 = ... βi = 0 - model is not adequate in predicting y
+Ha: At least one βi != 0 - model is adequate in predicting y
+
+F-statistic: 151.4 (F-statistic on fit5)  P-value: < 2.2e-16
+
+INTERPRETATION: At 1% level of significance, we reject the H0. The data provide strong evidence to conclude that the model is useful in predicting the House Prices.
+
+**Testing Individual Parameter**
+
+H0: βi = 0 - there is no relationship
+Ha : βi != 0 - there is a relationship
+
+INTERPRETATION: Each variable contributes significantly to the prediction of housing prices, with different degrees of impact. The test statistics and its associated p-value provide evidence to reject the null hypothesis of no effect. 
+
+
+**Multiple Coefficients of Determination: R^2a**
+
+```{r}
+summary(fit5)$adj.r.squared
+```
+INTERPRETATION: R2a = 0.8225846 which means after adjusting for sample size and the number of model parameters, about 82% of the total sample variation in Price (y) is explained by the model; the remainder is explained by random error.
+
+
+# MODEL EVALUATION
+
+**Fit 3**
+
+```{r}
+actual_y <- testing$PRICE
+y_hat_fit3 <- predict(fit3, testing, type = "response")
+
+absolute_difference_fit3 <- abs(actual_y - y_hat_fit3)
+cbind(actual_y, y_hat_fit3, absolute_difference_fit3)
+mean(absolute_difference_fit3)
+```
+Fit 3 - Mean Absolute Difference (Actual Y - Y_hat): 4.14
+
+**Fit 4**
+
+```{r}
+y_hat_fit4 <- predict(fit4, testing, type = "response")
+
+absolute_difference_fit4 <- abs(actual_y - y_hat_fit4)
+cbind(actual_y, y_hat_fit4, absolute_difference_fit4)
+mean(absolute_difference_fit4)
+```
+
+Fit 4 - Mean Absolute Difference (Actual Y - Y_hat): 3.92
+
+**Fit 5**
+
+```{r}
+y_hat_fit5 <- predict(fit5, testing, type = "response")
+
+absolute_difference_fit5 <- abs(actual_y - y_hat_fit5)
+cbind(actual_y, y_hat_fit5, absolute_difference_fit5)
+mean(absolute_difference_fit5)
+```
+
+Fit 5 - Mean Absolute Difference (Actual Y - Y_hat): 3.76
+
+# ESTIMATION AND PREDICTION
+
+**Prediction Interval**
+
+```{r}
+new_data <- data.frame(CRIM=0.63, CHAS=factor(0), NOX=0.52, AGE=60, RM=5, DIS=4.5, RAD=4, TAX=307, PTRATIO=21, LSTAT=5.5)
+```
+
+```{r}
+pred <- predict(fit5, newdata = new_data, interval = "prediction", level = 0.95)
+pred
+```
+INTERPRETATION: We are 95% confidence that the true value of the response variable will fall within the range given by the lower and upper bounds of the prediction interval. In this case, the predicted value of the response variable is 15.45('000 dollars), and the 95% prediction interval for this prediction is [7.90, 23.01] ('000 dollars).
+
+
+**Confidence Interval**
+
+```{r}
+conf <- predict(fit5, newdata = new_data, interval = "confidence", level = 0.95)
+conf
+```
+INTERPRETATION: We are 95% confident that the mean value of the response variable falls within the range given by the lower and upper bounds of the confidence interval. In this case, the predicted value of the response variable is 15.45('000 dollars), and the 95% confidence interval for this prediction is [14.02, 16.89] ('000 dollars).
+
+
+
+
+
